@@ -1,13 +1,19 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -std=c11
+CFLAGS  = -Wall -Wextra -std=c11 -D_POSIX_C_SOURCE=200809L
 BISON   = bison
 FLEX    = flex
 TARGET  = g-v1
 
+SRCS    = g-v1.tab.c lex.yy.c ast.c tabela.c
+
 all: $(TARGET)
 
-$(TARGET): g-v1.tab.c lex.yy.c
-	$(CC) $(CFLAGS) -o $@ g-v1.tab.c lex.yy.c
+$(TARGET): $(SRCS) ast.h tabela.h
+	$(CC) $(CFLAGS) -o $@ $(SRCS)
+
+# Compila com saída de depuração da AST (-DDEBUG)
+debug: CFLAGS += -DDEBUG
+debug: $(TARGET)
 
 g-v1.tab.c g-v1.tab.h: g-v1.y
 	$(BISON) -d -o g-v1.tab.c g-v1.y
@@ -18,7 +24,7 @@ lex.yy.c: g-v1.l g-v1.tab.h
 clean:
 	rm -f $(TARGET) g-v1.tab.c g-v1.tab.h lex.yy.c
 
-.PHONY: all clean
+.PHONY: all debug clean test
 
 test:
 	-./g-v1 teste.g

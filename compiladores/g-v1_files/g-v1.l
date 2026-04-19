@@ -3,6 +3,8 @@
 %{
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include "ast.h"
 #include "g-v1.tab.h"
 
 static int comment_start_line = 1;
@@ -35,7 +37,7 @@ CARACTERE  \'{CAR_BODY}\'
 "\""                          { string_start_line = yylineno; BEGIN(STRING); yymore(); }
 <STRING>[^\\\n\"]+          { yymore(); }
 <STRING>{CAR_ESC}             { yymore(); }
-<STRING>"\""                  { BEGIN(INITIAL); return CADEIACARACTERES; }
+<STRING>"\""                  { BEGIN(INITIAL); yylval.sval = strdup(yytext); return CADEIACARACTERES; }
 <STRING>\n                    { lexical_error_at("CADEIA DE CARACTERES OCUPA MAIS DE UMA LINHA", string_start_line); }
 <STRING><<EOF>>               { lexical_error_at("CADEIA DE CARACTERES OCUPA MAIS DE UMA LINHA", string_start_line); }
 
@@ -58,9 +60,9 @@ CARACTERE  \'{CAR_BODY}\'
 ">="                          { return MAIORIGUAL; }
 "<="                          { return MENORIGUAL; }
 
-{CARACTERE}                   { return CARCONST; }
-{INTLIT}                      { return INTCONST; }
-{ID}                          { return IDENTIFICADOR; }
+{CARACTERE}                   { yylval.sval = strdup(yytext); return CARCONST; }
+{INTLIT}                      { yylval.ival = atoi(yytext);   return INTCONST; }
+{ID}                          { yylval.sval = strdup(yytext); return IDENTIFICADOR; }
 
 [{}();,:+\-*/<>=!]            { return yytext[0]; }
 
@@ -71,6 +73,6 @@ CARACTERE  \'{CAR_BODY}\'
 %%
 
 static void lexical_error_at(const char *msg, int line) {
-    printf("ERRO: %s %d\n", msg, line);
+    fprintf(stderr, "ERRO: %s %d\n", msg, line);
     exit(EXIT_FAILURE);
 }
