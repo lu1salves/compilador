@@ -319,7 +319,7 @@ PrimExpr
 
 static void yyerror(const char *s) {
     (void)s;
-    printf("ERRO: ERRO SINTATICO %d\n", yylineno);
+    fprintf(stderr, "ERRO: ERRO SINTATICO %d\n", yylineno);
     exit(EXIT_FAILURE);
 }
 

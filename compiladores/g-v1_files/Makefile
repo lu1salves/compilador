@@ -1,15 +1,10 @@
-CC ?= cc
-CFLAGS ?= -Wall -Wextra -std=c11
-BISON ?= bison
-FLEX ?= flex
+CC      = gcc
+CFLAGS  = -Wall -Wextra -std=c11 -D_POSIX_C_SOURCE=200809L
+BISON   = bison
+FLEX    = flex
+TARGET  = g-v1
 
-TARGET = g-v1
-API_BINS = tests/symtab_api_test tests/semantic_api_test tests/codegen_api_test
-OBJS = g-v1.tab.o lex.yy.o ast.o symtab.o semantic.o codegen.o
-
-.PHONY: all clean ast symtab asm \
-        test test-all test-quick test-valid test-invalid test-lex test-syntax test-semantic \
-        test-ast test-symtab test-codegen test-api
+SRCS    = g-v1.tab.c lex.yy.c ast.c tabela.c
 
 all: $(TARGET)
 

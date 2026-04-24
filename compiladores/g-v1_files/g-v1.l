@@ -92,6 +92,6 @@ static char *xstrdup_local(const char *src) {
 }
 
 static void lexical_error_at(const char *msg, int line) {
-    printf("ERRO: %s %d\n", msg, line);
+    fprintf(stderr, "ERRO: %s %d\n", msg, line);
     exit(EXIT_FAILURE);
 }
