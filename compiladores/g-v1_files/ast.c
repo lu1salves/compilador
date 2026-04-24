@@ -1,278 +1,309 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include "ast.h"
 
-No  *ast_raiz      = NULL;
-FILE *ast_eventos_fp = NULL;   /* NULL = sem eventos; stdout em modo --step */
+#include <stdlib.h>
+#include <string.h>
 
-static int _id_ctr = 0;        /* contador global de IDs de nós */
+static void *xmalloc(size_t size) {
+    void *ptr = malloc(size);
+    if (ptr == NULL) {
+        fprintf(stderr, "ERRO: falha de memoria\n");
+        exit(EXIT_FAILURE);
+    }
+    return ptr;
+}
 
-/* ------------------------------------------------------------------
- * Helpers de emissão de eventos
- *
- * Formato de linha:
- *   N <id> <tipo> <linha> <val>    — novo nó
- *   L <id_pai> <slot> <id_filho>   — ligação filho1/2/3
- *   P <id_no> <id_prox>            — ligação prox (lista)
- *
- * O campo <val> é sempre o último, então pode conter espaços
- * (Python usa split(None, 4) para extrair os 5 campos).
- * ------------------------------------------------------------------ */
+static char *xstrdup_ast(const char *src) {
+    size_t len;
+    char *dst;
 
-static void emit_node(const No *n) {
-    if (!ast_eventos_fp) return;
-    char val[512] = "-";
-    switch (n->tipo) {
-        case NO_ID: case NO_ATRIB: case NO_CARCONST: case NO_CADEIA:
-            if (n->val.sval)
-                snprintf(val, sizeof(val), "%s", n->val.sval);
+    if (src == NULL) {
+        return NULL;
+    }
+
+    len = strlen(src) + 1;
+    dst = xmalloc(len);
+    memcpy(dst, src, len);
+    return dst;
+}
+
+static ASTNode *ast_new(ASTKind kind, int line, const char *lexeme,
+                        ASTNode *child1, ASTNode *child2, ASTNode *child3) {
+    ASTNode *node = (ASTNode *)xmalloc(sizeof(*node));
+    node->kind = kind;
+    node->line = line;
+    node->data_type = AST_TYPE_INVALID;
+    node->lexeme = xstrdup_ast(lexeme);
+    node->child1 = child1;
+    node->child2 = child2;
+    node->child3 = child3;
+    node->next = NULL;
+    return node;
+}
+
+ASTNode *ast_make_program(ASTNode *block, int line) {
+    return ast_new(AST_PROGRAM, line, "principal", block, NULL, NULL);
+}
+
+ASTNode *ast_make_block(ASTNode *decls, ASTNode *commands, int line) {
+    return ast_new(AST_BLOCK, line, NULL, decls, commands, NULL);
+}
+
+ASTNode *ast_make_decl(int line, const char *name, ASTDataType type) {
+    ASTNode *node = ast_new(AST_VAR_DECL, line, name, NULL, NULL, NULL);
+    node->data_type = type;
+    return node;
+}
+
+ASTNode *ast_make_ident(const char *name, int line) {
+    return ast_new(AST_IDENT, line, name, NULL, NULL, NULL);
+}
+
+ASTNode *ast_make_int_const(const char *text, int line) {
+    return ast_new(AST_INT_CONST, line, text, NULL, NULL, NULL);
+}
+
+ASTNode *ast_make_char_const(const char *text, int line) {
+    return ast_new(AST_CHAR_CONST, line, text, NULL, NULL, NULL);
+}
+
+ASTNode *ast_make_string_literal(const char *text, int line) {
+    return ast_new(AST_STRING_LITERAL, line, text, NULL, NULL, NULL);
+}
+
+ASTNode *ast_make_empty_stmt(int line) {
+    return ast_new(AST_EMPTY_STMT, line, NULL, NULL, NULL, NULL);
+}
+
+ASTNode *ast_make_assign(ASTNode *lhs, ASTNode *rhs, int line) {
+    return ast_new(AST_ASSIGN, line, "=", lhs, rhs, NULL);
+}
+
+ASTNode *ast_make_read(ASTNode *ident, int line) {
+    return ast_new(AST_READ, line, "leia", ident, NULL, NULL);
+}
+
+ASTNode *ast_make_write(ASTNode *value, int line) {
+    return ast_new(AST_WRITE, line, "escreva", value, NULL, NULL);
+}
+
+ASTNode *ast_make_newline(int line) {
+    return ast_new(AST_NEWLINE, line, "novalinha", NULL, NULL, NULL);
+}
+
+ASTNode *ast_make_if(ASTNode *cond, ASTNode *then_cmd, ASTNode *else_cmd, int line) {
+    return ast_new(AST_IF, line, "se", cond, then_cmd, else_cmd);
+}
+
+ASTNode *ast_make_while(ASTNode *cond, ASTNode *body, int line) {
+    return ast_new(AST_WHILE, line, "enquanto", cond, body, NULL);
+}
+
+ASTNode *ast_make_binary_op(const char *op, ASTNode *lhs, ASTNode *rhs, int line) {
+    return ast_new(AST_BINARY_OP, line, op, lhs, rhs, NULL);
+}
+
+ASTNode *ast_make_unary_op(const char *op, ASTNode *expr, int line) {
+    return ast_new(AST_UNARY_OP, line, op, expr, NULL, NULL);
+}
+
+ASTNode *ast_append(ASTNode *list, ASTNode *node) {
+    ASTNode *tail;
+
+    if (list == NULL) {
+        return node;
+    }
+    if (node == NULL) {
+        return list;
+    }
+
+    tail = list;
+    while (tail->next != NULL) {
+        tail = tail->next;
+    }
+    tail->next = node;
+    return list;
+}
+
+ASTNode *ast_build_decl_list(ASTNode *id_list, ASTDataType type) {
+    ASTNode *decls = NULL;
+    ASTNode *curr = id_list;
+
+    while (curr != NULL) {
+        ASTNode *next = curr->next;
+        ASTNode *decl = ast_make_decl(curr->line, curr->lexeme, type);
+        decls = ast_append(decls, decl);
+
+        curr->next = NULL;
+        ast_free(curr);
+        curr = next;
+    }
+
+    return decls;
+}
+
+const char *ast_type_name(ASTDataType type) {
+    switch (type) {
+        case AST_TYPE_INT:
+            return "int";
+        case AST_TYPE_CAR:
+            return "car";
+        default:
+            return "<tipo-invalido>";
+    }
+}
+
+static void print_indent(FILE *out, int indent) {
+    int i;
+    for (i = 0; i < indent; ++i) {
+        fputs("  ", out);
+    }
+}
+
+static void ast_print_node(FILE *out, const ASTNode *node, int indent);
+
+static void ast_print_list(FILE *out, const char *label, const ASTNode *node, int indent) {
+    if (node == NULL) {
+        return;
+    }
+
+    print_indent(out, indent);
+    fprintf(out, "%s:\n", label);
+
+    while (node != NULL) {
+        ast_print_node(out, node, indent + 1);
+        node = node->next;
+    }
+}
+
+static void ast_print_node(FILE *out, const ASTNode *node, int indent) {
+    if (node == NULL) {
+        return;
+    }
+
+    print_indent(out, indent);
+
+    switch (node->kind) {
+        case AST_PROGRAM:
+            fprintf(out, "PROGRAM line=%d\n", node->line);
+            ast_print_node(out, node->child1, indent + 1);
             break;
-        case NO_INTCONST:
-            snprintf(val, sizeof(val), "%d", n->val.ival);
+
+        case AST_BLOCK:
+            fprintf(out, "BLOCK line=%d\n", node->line);
+            ast_print_list(out, "decls", node->child1, indent + 1);
+            ast_print_list(out, "commands", node->child2, indent + 1);
             break;
-        case NO_DECL_VAR:
-            snprintf(val, sizeof(val), "%s",
-                     n->val.ival == TIPO_INT ? "int" : "car");
+
+        case AST_VAR_DECL:
+            fprintf(out, "VAR_DECL line=%d name=%s type=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "<anon>",
+                    ast_type_name(node->data_type));
             break;
-        default: break;
+
+        case AST_EMPTY_STMT:
+            fprintf(out, "EMPTY_STMT line=%d\n", node->line);
+            break;
+
+        case AST_ASSIGN:
+            fprintf(out, "ASSIGN line=%d\n", node->line);
+            ast_print_node(out, node->child1, indent + 1);
+            ast_print_node(out, node->child2, indent + 1);
+            break;
+
+        case AST_READ:
+            fprintf(out, "READ line=%d\n", node->line);
+            ast_print_node(out, node->child1, indent + 1);
+            break;
+
+        case AST_WRITE:
+            fprintf(out, "WRITE line=%d\n", node->line);
+            ast_print_node(out, node->child1, indent + 1);
+            break;
+
+        case AST_NEWLINE:
+            fprintf(out, "NEWLINE line=%d\n", node->line);
+            break;
+
+        case AST_IF:
+            fprintf(out, "IF line=%d\n", node->line);
+            print_indent(out, indent + 1);
+            fprintf(out, "cond:\n");
+            ast_print_node(out, node->child1, indent + 2);
+            print_indent(out, indent + 1);
+            fprintf(out, "then:\n");
+            ast_print_node(out, node->child2, indent + 2);
+            if (node->child3 != NULL) {
+                print_indent(out, indent + 1);
+                fprintf(out, "else:\n");
+                ast_print_node(out, node->child3, indent + 2);
+            }
+            break;
+
+        case AST_WHILE:
+            fprintf(out, "WHILE line=%d\n", node->line);
+            print_indent(out, indent + 1);
+            fprintf(out, "cond:\n");
+            ast_print_node(out, node->child1, indent + 2);
+            print_indent(out, indent + 1);
+            fprintf(out, "body:\n");
+            ast_print_node(out, node->child2, indent + 2);
+            break;
+
+        case AST_BINARY_OP:
+            fprintf(out, "BINARY_OP line=%d op=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "<op>");
+            ast_print_node(out, node->child1, indent + 1);
+            ast_print_node(out, node->child2, indent + 1);
+            break;
+
+        case AST_UNARY_OP:
+            fprintf(out, "UNARY_OP line=%d op=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "<op>");
+            ast_print_node(out, node->child1, indent + 1);
+            break;
+
+        case AST_IDENT:
+            fprintf(out, "IDENT line=%d name=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "<id>");
+            break;
+
+        case AST_INT_CONST:
+            fprintf(out, "INT_CONST line=%d value=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "0");
+            break;
+
+        case AST_CHAR_CONST:
+            fprintf(out, "CHAR_CONST line=%d value=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "''");
+            break;
+
+        case AST_STRING_LITERAL:
+            fprintf(out, "STRING_LITERAL line=%d value=%s\n",
+                    node->line,
+                    node->lexeme ? node->lexeme : "\"\"");
+            break;
     }
-    fprintf(ast_eventos_fp, "N %d %s %d %s\n",
-            n->id, nome_tipo_no(n->tipo), n->linha, val);
-    fflush(ast_eventos_fp);
 }
 
-static void emit_link(const No *pai, const char *slot, const No *filho) {
-    if (!ast_eventos_fp || !filho) return;
-    fprintf(ast_eventos_fp, "L %d %s %d\n", pai->id, slot, filho->id);
-    fflush(ast_eventos_fp);
+void ast_print(FILE *out, const ASTNode *node) {
+    ast_print_node(out, node, 0);
 }
 
-/* ------------------------------------------------------------------
- * ast_liga_prox — substitui "a->prox = b" nos arquivos .y
- * Emite evento P para que o visualizador possa desenhar a ligação.
- * ------------------------------------------------------------------ */
-void ast_liga_prox(No *a, No *b) {
-    if (!a) return;
-    a->prox = b;
-    if (ast_eventos_fp && b) {
-        fprintf(ast_eventos_fp, "P %d %d\n", a->id, b->id);
-        fflush(ast_eventos_fp);
+void ast_free(ASTNode *node) {
+    if (node == NULL) {
+        return;
     }
-}
 
-/* ------------------------------------------------------------------
- * nome_tipo_no — string legível para cada tipo de nó
- * (declarada aqui para ser usada tanto em emit_node quanto em ast_print)
- * ------------------------------------------------------------------ */
-const char *nome_tipo_no(TipoNo t) {
-    switch (t) {
-        case NO_PROGRAMA:      return "NO_PROGRAMA";
-        case NO_BLOCO:         return "NO_BLOCO";
-        case NO_DECL_VAR:      return "NO_DECL_VAR";
-        case NO_CMD_VAZIO:     return "NO_CMD_VAZIO";
-        case NO_CMD_EXPR:      return "NO_CMD_EXPR";
-        case NO_CMD_LEIA:      return "NO_CMD_LEIA";
-        case NO_CMD_ESCREVA:   return "NO_CMD_ESCREVA";
-        case NO_CMD_NOVALINHA: return "NO_CMD_NOVALINHA";
-        case NO_CMD_SE:        return "NO_CMD_SE";
-        case NO_CMD_ENQUANTO:  return "NO_CMD_ENQUANTO";
-        case NO_ATRIB:         return "NO_ATRIB";
-        case NO_OU:            return "NO_OU";
-        case NO_E:             return "NO_E";
-        case NO_IGUAL:         return "NO_IGUAL";
-        case NO_DIFERENTE:     return "NO_DIFERENTE";
-        case NO_MENOR:         return "NO_MENOR";
-        case NO_MAIOR:         return "NO_MAIOR";
-        case NO_MENORIGUAL:    return "NO_MENORIGUAL";
-        case NO_MAIORIGUAL:    return "NO_MAIORIGUAL";
-        case NO_SOMA:          return "NO_SOMA";
-        case NO_SUB:           return "NO_SUB";
-        case NO_MUL:           return "NO_MUL";
-        case NO_DIV:           return "NO_DIV";
-        case NO_NEG:           return "NO_NEG";
-        case NO_NOT:           return "NO_NOT";
-        case NO_ID:            return "NO_ID";
-        case NO_INTCONST:      return "NO_INTCONST";
-        case NO_CARCONST:      return "NO_CARCONST";
-        case NO_CADEIA:        return "NO_CADEIA";
-        default:               return "?";
-    }
-}
-
-/* ------------------------------------------------------------------
- * Alocador genérico
- * ------------------------------------------------------------------ */
-static No *novo_no(TipoNo tipo, int linha) {
-    No *n = calloc(1, sizeof(No));
-    if (!n) { perror("calloc"); exit(EXIT_FAILURE); }
-    n->tipo      = tipo;
-    n->id        = ++_id_ctr;
-    n->linha     = linha;
-    n->tipo_expr = TIPO_INDET;
-    return n;
-}
-
-/* ===== Construtores ===== */
-
-No *ast_programa(No *bloco, int linha) {
-    No *n = novo_no(NO_PROGRAMA, linha);
-    n->filho1 = bloco;
-    emit_node(n);
-    emit_link(n, "f1", bloco);
-    return n;
-}
-
-No *ast_bloco(No *decls, No *cmds, int linha) {
-    No *n = novo_no(NO_BLOCO, linha);
-    n->filho1 = decls;
-    n->filho2 = cmds;
-    emit_node(n);
-    emit_link(n, "f1", decls);
-    emit_link(n, "f2", cmds);
-    return n;
-}
-
-No *ast_decl_var(No *ids, int tipo, int linha) {
-    No *n       = novo_no(NO_DECL_VAR, linha);
-    n->filho1   = ids;
-    n->val.ival = tipo;
-    emit_node(n);
-    emit_link(n, "f1", ids);
-    return n;
-}
-
-No *ast_id(char *nome, int linha) {
-    No *n       = novo_no(NO_ID, linha);
-    n->val.sval = nome;
-    emit_node(n);
-    return n;
-}
-
-No *ast_cmd_vazio(int linha) {
-    No *n = novo_no(NO_CMD_VAZIO, linha);
-    emit_node(n);
-    return n;
-}
-
-No *ast_cmd_expr(No *expr, int linha) {
-    No *n     = novo_no(NO_CMD_EXPR, linha);
-    n->filho1 = expr;
-    emit_node(n);
-    emit_link(n, "f1", expr);
-    return n;
-}
-
-No *ast_cmd_leia(No *id, int linha) {
-    No *n     = novo_no(NO_CMD_LEIA, linha);
-    n->filho1 = id;
-    emit_node(n);
-    emit_link(n, "f1", id);
-    return n;
-}
-
-No *ast_cmd_escreva(No *expr, int linha) {
-    No *n     = novo_no(NO_CMD_ESCREVA, linha);
-    n->filho1 = expr;
-    emit_node(n);
-    emit_link(n, "f1", expr);
-    return n;
-}
-
-No *ast_cmd_novalinha(int linha) {
-    No *n = novo_no(NO_CMD_NOVALINHA, linha);
-    emit_node(n);
-    return n;
-}
-
-No *ast_cmd_se(No *cond, No *entao, No *senao, int linha) {
-    No *n     = novo_no(NO_CMD_SE, linha);
-    n->filho1 = cond;
-    n->filho2 = entao;
-    n->filho3 = senao;
-    emit_node(n);
-    emit_link(n, "f1", cond);
-    emit_link(n, "f2", entao);
-    emit_link(n, "f3", senao);  /* emit_link ignora NULL */
-    return n;
-}
-
-No *ast_cmd_enquanto(No *cond, No *corpo, int linha) {
-    No *n     = novo_no(NO_CMD_ENQUANTO, linha);
-    n->filho1 = cond;
-    n->filho2 = corpo;
-    emit_node(n);
-    emit_link(n, "f1", cond);
-    emit_link(n, "f2", corpo);
-    return n;
-}
-
-No *ast_binop(TipoNo op, No *esq, No *dir, int linha) {
-    No *n     = novo_no(op, linha);
-    n->filho1 = esq;
-    n->filho2 = dir;
-    emit_node(n);
-    emit_link(n, "f1", esq);
-    emit_link(n, "f2", dir);
-    return n;
-}
-
-No *ast_unop(TipoNo op, No *filho, int linha) {
-    No *n     = novo_no(op, linha);
-    n->filho1 = filho;
-    emit_node(n);
-    emit_link(n, "f1", filho);
-    return n;
-}
-
-No *ast_atrib(char *nome, No *expr, int linha) {
-    No *n       = novo_no(NO_ATRIB, linha);
-    n->val.sval = nome;
-    n->filho1   = expr;
-    emit_node(n);
-    emit_link(n, "f1", expr);
-    return n;
-}
-
-No *ast_intconst(int val, int linha) {
-    No *n       = novo_no(NO_INTCONST, linha);
-    n->val.ival = val;
-    emit_node(n);
-    return n;
-}
-
-No *ast_carconst(char *val, int linha) {
-    No *n       = novo_no(NO_CARCONST, linha);
-    n->val.sval = val;
-    emit_node(n);
-    return n;
-}
-
-No *ast_cadeia(char *val, int linha) {
-    No *n       = novo_no(NO_CADEIA, linha);
-    n->val.sval = val;
-    emit_node(n);
-    return n;
-}
-
-/* ===== Impressão da AST (debug textual) ===== */
-
-void ast_print(No *no, int indent) {
-    if (!no) return;
-    for (int i = 0; i < indent; i++) printf("  ");
-    printf("%s", nome_tipo_no(no->tipo));
-    switch (no->tipo) {
-        case NO_ID: case NO_ATRIB: case NO_CARCONST: case NO_CADEIA:
-            printf("(%s)", no->val.sval); break;
-        case NO_INTCONST:
-            printf("(%d)", no->val.ival); break;
-        case NO_DECL_VAR:
-            printf("(%s)", no->val.ival == TIPO_INT ? "int" : "car"); break;
-        default: break;
-    }
-    printf(" [L%d]\n", no->linha);
-    ast_print(no->filho1, indent + 1);
-    ast_print(no->filho2, indent + 1);
-    ast_print(no->filho3, indent + 1);
-    ast_print(no->prox,   indent);
+    ast_free(node->child1);
+    ast_free(node->child2);
+    ast_free(node->child3);
+    ast_free(node->next);
+    free(node->lexeme);
+    free(node);
 }

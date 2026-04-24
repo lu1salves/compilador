@@ -1,0 +1,4 @@
+ESCOPO 0 (nivel 0)
+  x : int (linha 3)
+ESCOPO 1 (nivel 1)
+  y : car (linha 7)
