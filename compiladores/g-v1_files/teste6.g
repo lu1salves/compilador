@@ -1,4 +1,0 @@
-principal {
-    escreva "oi
-mundo";
-}

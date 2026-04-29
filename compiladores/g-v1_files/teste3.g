@@ -1,3 +1,0 @@
-principal {
-    escreva 1
-}
