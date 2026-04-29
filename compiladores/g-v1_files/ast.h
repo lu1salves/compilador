@@ -31,6 +31,7 @@ typedef enum {
 typedef struct ASTNode {
     ASTKind kind;
     int line;
+    int id;
     ASTDataType data_type;
     char *lexeme;
     struct ASTNode *child1;
@@ -59,6 +60,8 @@ ASTNode *ast_make_unary_op(const char *op, ASTNode *expr, int line);
 ASTNode *ast_append(ASTNode *list, ASTNode *node);
 ASTNode *ast_build_decl_list(ASTNode *id_list, ASTDataType type);
 const char *ast_type_name(ASTDataType type);
+
+void ast_step_init(FILE *out);
 
 void ast_print(FILE *out, const ASTNode *node);
 void ast_free(ASTNode *node);

@@ -21,6 +21,7 @@ ASTNode *ast_root = NULL;
 static int opt_print_ast = 0;
 static int opt_print_symtab = 0;
 static int opt_emit_code = 0;
+static int opt_step = 0;
 static const char *opt_output_path = NULL;
 
 static void yyerror(const char *s);
@@ -332,6 +333,8 @@ static int parse_cli(int argc, char **argv, const char **input_path) {
             opt_print_ast = 1;
         } else if (strcmp(argv[i], "--symtab") == 0) {
             opt_print_symtab = 1;
+        } else if (strcmp(argv[i], "--step") == 0) {
+            opt_step = 1;
         } else if (strcmp(argv[i], "--code") == 0 || strcmp(argv[i], "-S") == 0) {
             opt_emit_code = 1;
         } else if (strcmp(argv[i], "-o") == 0) {
@@ -375,6 +378,10 @@ int main(int argc, char **argv) {
     if (yyin == NULL) {
         perror(input_path);
         return EXIT_FAILURE;
+    }
+
+    if (opt_step) {
+        ast_step_init(stdout);
     }
 
     status = yyparse();

@@ -4,7 +4,9 @@ BISON   = bison
 FLEX    = flex
 TARGET  = g-v1
 
-SRCS    = g-v1.tab.c lex.yy.c ast.c tabela.c
+SRCS    = g-v1.tab.c lex.yy.c ast.c symtab.c semantic.c codegen.c
+OBJS    = g-v1.tab.o lex.yy.o ast.o symtab.o semantic.o codegen.o
+API_BINS = tests/symtab_api_test tests/semantic_api_test tests/codegen_api_test
 
 all: $(TARGET)
 

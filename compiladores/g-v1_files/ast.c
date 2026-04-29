@@ -3,6 +3,36 @@
 #include <stdlib.h>
 #include <string.h>
 
+static FILE *g_step_out   = NULL;
+static int   g_step_id    = 0;
+
+void ast_step_init(FILE *out) {
+    g_step_out = out;
+    g_step_id  = 0;
+}
+
+static const char *step_kind_name(ASTKind kind) {
+    switch (kind) {
+        case AST_PROGRAM:        return "NO_PROGRAMA";
+        case AST_BLOCK:          return "NO_BLOCO";
+        case AST_VAR_DECL:       return "NO_DECL_VAR";
+        case AST_EMPTY_STMT:     return "NO_CMD_EMPTY";
+        case AST_ASSIGN:         return "NO_CMD_ASSIGN";
+        case AST_READ:           return "NO_CMD_READ";
+        case AST_WRITE:          return "NO_CMD_WRITE";
+        case AST_NEWLINE:        return "NO_CMD_NOVALINHA";
+        case AST_IF:             return "NO_CMD_IF";
+        case AST_WHILE:          return "NO_CMD_WHILE";
+        case AST_BINARY_OP:      return "NO_BINARY_OP";
+        case AST_UNARY_OP:       return "NO_UNARY_OP";
+        case AST_IDENT:          return "NO_ID";
+        case AST_INT_CONST:      return "NO_INTCONST";
+        case AST_CHAR_CONST:     return "NO_CARCONST";
+        case AST_STRING_LITERAL: return "NO_CADEIA";
+        default:                 return "NO_DESCONHECIDO";
+    }
+}
+
 static void *xmalloc(size_t size) {
     void *ptr = malloc(size);
     if (ptr == NULL) {
@@ -29,14 +59,29 @@ static char *xstrdup_ast(const char *src) {
 static ASTNode *ast_new(ASTKind kind, int line, const char *lexeme,
                         ASTNode *child1, ASTNode *child2, ASTNode *child3) {
     ASTNode *node = (ASTNode *)xmalloc(sizeof(*node));
-    node->kind = kind;
-    node->line = line;
+    node->kind      = kind;
+    node->line      = line;
+    node->id        = ++g_step_id;
     node->data_type = AST_TYPE_INVALID;
-    node->lexeme = xstrdup_ast(lexeme);
-    node->child1 = child1;
-    node->child2 = child2;
-    node->child3 = child3;
-    node->next = NULL;
+    node->lexeme    = xstrdup_ast(lexeme);
+    node->child1    = child1;
+    node->child2    = child2;
+    node->child3    = child3;
+    node->next      = NULL;
+
+    if (g_step_out != NULL) {
+        const char *val = (lexeme != NULL && lexeme[0] != '\0') ? lexeme : "-";
+        fprintf(g_step_out, "N %d %s %d %s\n",
+                node->id, step_kind_name(kind), line, val);
+        if (child1 != NULL)
+            fprintf(g_step_out, "L %d f1 %d\n", node->id, child1->id);
+        if (child2 != NULL)
+            fprintf(g_step_out, "L %d f2 %d\n", node->id, child2->id);
+        if (child3 != NULL)
+            fprintf(g_step_out, "L %d f3 %d\n", node->id, child3->id);
+        fflush(g_step_out);
+    }
+
     return node;
 }
 
@@ -121,6 +166,10 @@ ASTNode *ast_append(ASTNode *list, ASTNode *node) {
         tail = tail->next;
     }
     tail->next = node;
+    if (g_step_out != NULL) {
+        fprintf(g_step_out, "P %d %d\n", tail->id, node->id);
+        fflush(g_step_out);
+    }
     return list;
 }
 

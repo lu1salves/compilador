@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """
-visualizador.py — Visualizador passo a passo da construção da AST do compilador g-v1
+visualizador.py — Visualizador passo a passo da construção da AST (PyQt6)
 
 Uso:
     python3 visualizador.py <arquivo.g>
-
-O script executa './g-v1 --step <arquivo.g>', captura os eventos de construção
-da árvore e exibe cada passo numa janela gráfica tkinter.
 
 Protocolo de eventos (um por linha em stdout do compilador):
     N <id> <tipo> <linha> <val>        — nó criado
@@ -16,50 +13,64 @@ Protocolo de eventos (um por linha em stdout do compilador):
 
 import sys
 import os
+import math
 import subprocess
-import tkinter as tk
-from tkinter import ttk, messagebox
 
-# ── Constantes de layout ───────────────────────────────────────────
-NODE_W   = 130   # largura do retângulo do nó
-NODE_H   = 38    # altura do retângulo do nó
-H_PAD    = 18    # espaçamento horizontal mínimo entre sub-árvores
-V_GAP    = 72    # distância vertical pai → filho
-MARGIN   = 40    # margem ao redor da árvore no canvas
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QSlider,
+    QGraphicsScene, QGraphicsView, QGraphicsItem,
+    QMessageBox, QFrame,
+)
+from PyQt6.QtCore import Qt, QRectF, QTimer
+from PyQt6.QtGui import (
+    QPainter, QPainterPath, QColor, QPen, QBrush,
+    QFont, QTransform,
+)
 
-# ── Cores por categoria de nó ─────────────────────────────────────
+# ── Constantes de layout ──────────────────────────────────────────────────────
+NODE_W = 130
+NODE_H = 42
+H_PAD  = 20
+V_GAP  = 75
+MARGIN = 50
+
+# ── Paleta (Catppuccin Mocha) ─────────────────────────────────────────────────
+BG_WINDOW = QColor('#1e1e2e')
+BG_SCENE  = QColor('#181825')
+BG_CTRL   = QColor('#313244')
+TEXT_MAIN = QColor('#cdd6f4')
+TEXT_DIM  = QColor('#7f849c')
+HIGHLIGHT = QColor('#f9e2af')
+
+
 def _cor_no(tipo):
-    """Retorna (cor_fundo, cor_texto) para o tipo de nó."""
-    if tipo == 'NO_PROGRAMA':                    return '#1a6fa8', '#ffffff'
-    if tipo == 'NO_BLOCO':                       return '#217a3d', '#ffffff'
-    if tipo == 'NO_DECL_VAR':                    return '#b87c0a', '#ffffff'
-    if tipo.startswith('NO_CMD_'):               return '#c05c1a', '#ffffff'
+    if tipo == 'NO_PROGRAMA':                   return QColor('#1a6fa8'), QColor('#ffffff')
+    if tipo == 'NO_BLOCO':                      return QColor('#217a3d'), QColor('#ffffff')
+    if tipo == 'NO_DECL_VAR':                   return QColor('#b87c0a'), QColor('#ffffff')
+    if tipo.startswith('NO_CMD_'):              return QColor('#c05c1a'), QColor('#ffffff')
     if tipo in ('NO_ID', 'NO_INTCONST',
-                'NO_CARCONST', 'NO_CADEIA'):     return '#aa2222', '#ffffff'
-    return '#6b3fa0', '#ffffff'                  # expressões binárias/unárias
+                'NO_CARCONST', 'NO_CADEIA'):    return QColor('#aa2222'), QColor('#ffffff')
+    return QColor('#6b3fa0'), QColor('#ffffff')
+
 
 def _label_no(tipo, val):
-    """Texto curto exibido dentro do retângulo."""
-    short = (tipo.replace('NO_CMD_', '')
-                 .replace('NO_', ''))
+    short = tipo.replace('NO_CMD_', '').replace('NO_', '')
     if val and val != '-':
-        # Limita o val a 14 chars para não extrapolar o retângulo
         v = val if len(val) <= 14 else val[:13] + '…'
         return f"{short}\n{v}"
     return short
 
-# ── Parsing dos eventos ───────────────────────────────────────────
+
+# ── Parsing dos eventos ───────────────────────────────────────────────────────
 def parse_events(raw_lines):
-    """
-    Converte as linhas de texto do compilador numa lista de dicts.
-    Cada dict tem uma chave 't' ('N', 'L' ou 'P') e os campos correspondentes.
-    """
     events = []
     for line in raw_lines:
         line = line.rstrip('\n')
         if not line:
             continue
-        parts = line.split(None, 4)   # split em no máximo 5 partes
+        parts = line.split(None, 4)
         t = parts[0]
         if t == 'N' and len(parts) >= 5:
             events.append({'t': 'N', 'id': int(parts[1]),
@@ -73,205 +84,279 @@ def parse_events(raw_lines):
                            'prox': int(parts[2])})
     return events
 
-# ── Algoritmo de layout ───────────────────────────────────────────
-#
-# Convenção:
-#   - filho1/2/3 ("filhos verticais"): aparecem um nível ABAIXO do pai
-#   - prox ("irmão de lista"):         aparecem no MESMO nível, à direita
-#
-# A largura de uma sub-árvore com raiz N é:
-#   largura(N) = max(NODE_W + H_PAD,
-#                    soma dos larguras dos filhos verticais)
-#              + largura(N.prox)
-#
-# Isso garante que os irmãos de lista ficam lado a lado no mesmo nível.
 
+# ── Algoritmo de layout ───────────────────────────────────────────────────────
 def _largura(nid, nodes):
-    """Largura total da sub-árvore enraizada em nid (incluindo cadeia prox)."""
     if nid not in nodes:
         return 0
     n = nodes[nid]
     filhos = [n.get(s) for s in ('f1', 'f2', 'f3')
               if n.get(s) and n.get(s) in nodes]
-    if filhos:
-        w_propria = sum(_largura(c, nodes) for c in filhos)
-    else:
-        w_propria = NODE_W + H_PAD
-
+    w = sum(_largura(c, nodes) for c in filhos) if filhos else NODE_W + H_PAD
     prox = n.get('prox')
-    w_prox = _largura(prox, nodes) if prox and prox in nodes else 0
-    return w_propria + w_prox
+    return w + (_largura(prox, nodes) if prox and prox in nodes else 0)
 
 
 def _assign(nid, nodes, pos, x, y):
-    """Atribui posições (x, y) a nid e a toda a sua sub-árvore."""
     if nid not in nodes:
         return
     n = nodes[nid]
     filhos = [n.get(s) for s in ('f1', 'f2', 'f3')
               if n.get(s) and n.get(s) in nodes]
-
-    # Largura ocupada pelos filhos verticais (sem contar o prox)
-    if filhos:
-        w_propria = sum(_largura(c, nodes) for c in filhos)
-    else:
-        w_propria = NODE_W + H_PAD
-
-    # Posição deste nó: centro da região w_propria
-    pos[nid] = (x + w_propria / 2, y)
-
-    # Posiciona filhos verticais
+    w = sum(_largura(c, nodes) for c in filhos) if filhos else NODE_W + H_PAD
+    pos[nid] = (x + w / 2, y)
     cx = x
     for c in filhos:
         cw = _largura(c, nodes)
         _assign(c, nodes, pos, cx, y + V_GAP)
         cx += cw
-
-    # Posiciona prox à direita (mesmo nível)
     prox = n.get('prox')
     if prox and prox in nodes:
-        _assign(prox, nodes, pos, x + w_propria, y)
+        _assign(prox, nodes, pos, x + w, y)
 
 
 def compute_layout(nodes):
-    """
-    Calcula posições para todos os nós do estado atual.
-    Nós desconectados (sem pai) são raízes e são empilhados
-    horizontalmente na parte de cima do canvas.
-    """
-    # Determina quais nós têm algum pai
     referenciados = set()
     for n in nodes.values():
         for s in ('f1', 'f2', 'f3', 'prox'):
             v = n.get(s)
             if v:
                 referenciados.add(v)
-
     raizes = [nid for nid in nodes if nid not in referenciados]
-    pos = {}
-    x = MARGIN
+    pos, x = {}, MARGIN
     for r in raizes:
         _assign(r, nodes, pos, x, MARGIN)
         x += _largura(r, nodes)
-
     return pos
 
-# ── Aplicação ─────────────────────────────────────────────────────
 
-class Visualizador:
-    def __init__(self, root_tk, events, nome_arquivo):
-        self.root     = root_tk
-        self.events   = events
-        self.passo    = 0             # próximo evento a aplicar
-        self.nodes    = {}            # id → dict com tipo, val, f1, f2, f3, prox
-        self.ultimo_id = None         # id do último nó ou aresta destacado
-        self.tocando  = False
-        self.apos_id  = None          # after() handle para auto-play
+# ── Item gráfico de nó ────────────────────────────────────────────────────────
+class NodeItem(QGraphicsItem):
+    RADIUS = 8
 
-        root_tk.title(f"Visualizador AST — {os.path.basename(nome_arquivo)}")
-        root_tk.configure(bg='#1e1e2e')
+    def __init__(self, tipo, val, highlight=False):
+        super().__init__()
+        self.tipo      = tipo
+        self.val       = val
+        self.highlight = highlight
+        self.bg, self.fg = _cor_no(tipo)
+
+    def boundingRect(self):
+        extra = 6 if self.highlight else 0
+        return QRectF(-NODE_W / 2 - extra, -NODE_H / 2 - extra,
+                       NODE_W + 2 * extra,  NODE_H + 2 * extra)
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r    = self.RADIUS
+        rect = QRectF(-NODE_W / 2, -NODE_H / 2, NODE_W, NODE_H)
+
+        if self.highlight:
+            glow = rect.adjusted(-5, -5, 5, 5)
+            path = QPainterPath()
+            path.addRoundedRect(glow, r + 3, r + 3)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(HIGHLIGHT))
+            painter.drawPath(path)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, r, r)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.bg))
+        painter.drawPath(path)
+
+        border_color = HIGHLIGHT if self.highlight else QColor('#45475a')
+        painter.setPen(QPen(border_color, 2 if self.highlight else 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        painter.setFont(QFont('Courier', 8, QFont.Weight.Bold))
+        painter.setPen(QPen(self.fg))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                         _label_no(self.tipo, self.val))
+
+
+# ── QGraphicsView com zoom e pan ──────────────────────────────────────────────
+class ASTView(QGraphicsView):
+    def __init__(self, scene):
+        super().__init__(scene)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setBackgroundBrush(QBrush(BG_SCENE))
+        self.setStyleSheet('border: none;')
+        self._zoom = 0
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        step = 1 if delta > 0 else -1
+        self._zoom = max(-10, min(15, self._zoom + step))
+        factor = 1.15 if delta > 0 else 1 / 1.15
+        self.scale(factor, factor)
+
+    def fit(self):
+        self.fitInView(self.scene().sceneRect(),
+                       Qt.AspectRatioMode.KeepAspectRatio)
+        self._zoom = 0
+
+
+# ── Janela principal ──────────────────────────────────────────────────────────
+class Visualizador(QMainWindow):
+    def __init__(self, events, nome_arquivo):
+        super().__init__()
+        self.events    = events
+        self.passo     = 0
+        self.nodes     = {}
+        self.ultimo_id = None
+        self.tocando   = False
+        self._timer    = QTimer(self)
+        self._timer.timeout.connect(self._tick_auto)
+
+        self.setWindowTitle(f"Visualizador AST — {os.path.basename(nome_arquivo)}")
+        self.resize(1200, 750)
+        self._apply_style()
         self._build_ui()
         self._atualiza_tudo()
 
-    # ── Construção da interface ────────────────────────────────────
+    # ── Estilo ────────────────────────────────────────────────────────────────
+    def _apply_style(self):
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{
+                background-color: {BG_WINDOW.name()};
+                color: {TEXT_MAIN.name()};
+            }}
+            QPushButton {{
+                background-color: {BG_CTRL.name()};
+                color: {TEXT_MAIN.name()};
+                border: 1px solid #45475a;
+                border-radius: 4px;
+                padding: 5px 14px;
+                font-family: Courier;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QPushButton:hover    {{ background-color: #45475a; }}
+            QPushButton:disabled {{ color: #45475a; background-color: #1e1e2e; }}
+            QLabel               {{ background: transparent; font-family: Courier; }}
+            QSlider::groove:horizontal {{
+                height: 4px; background: #45475a; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {TEXT_MAIN.name()};
+                width: 12px; height: 12px;
+                margin: -4px 0; border-radius: 6px;
+            }}
+            QFrame[frameShape="4"] {{ color: #45475a; }}
+        """)
 
+    # ── Construção da UI ──────────────────────────────────────────────────────
     def _build_ui(self):
-        # ── Barra superior com info ────────────────────────────────
-        top = tk.Frame(self.root, bg='#1e1e2e')
-        top.pack(side='top', fill='x', padx=8, pady=(8, 0))
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(8, 8, 8, 6)
+        root.setSpacing(6)
 
-        self.lbl_passo = ttk.Label(top, text="", font=('Courier', 10))
-        self.lbl_passo.pack(side='left')
+        # Barra de info
+        top = QHBoxLayout()
+        self.lbl_passo  = QLabel("Passo 0/0")
+        self.lbl_evento = QLabel("← use ▶ Próximo para avançar")
+        self.lbl_passo.setStyleSheet(f"color: {TEXT_MAIN.name()}; font-size: 10px;")
+        self.lbl_evento.setStyleSheet("color: #a6e3a1; font-size: 10px;")
+        top.addWidget(self.lbl_passo)
+        top.addSpacing(16)
+        top.addWidget(self.lbl_evento)
+        top.addStretch()
+        root.addLayout(top)
 
-        self.lbl_evento = ttk.Label(top, text="", font=('Courier', 10),
-                                    foreground='#a6e3a1')
-        self.lbl_evento.pack(side='left', padx=16)
+        # Canvas
+        self.scene = QGraphicsScene()
+        self.scene.setBackgroundBrush(QBrush(BG_SCENE))
+        self.view  = ASTView(self.scene)
+        root.addWidget(self.view, stretch=1)
 
-        # ── Canvas com scrollbars ──────────────────────────────────
-        frame_canvas = tk.Frame(self.root, bg='#1e1e2e')
-        frame_canvas.pack(fill='both', expand=True, padx=8, pady=8)
+        # Separador
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        root.addWidget(sep)
 
-        self.canvas = tk.Canvas(frame_canvas, bg='#181825',
-                                highlightthickness=0)
-        sb_v = ttk.Scrollbar(frame_canvas, orient='vertical',
-                              command=self.canvas.yview)
-        sb_h = ttk.Scrollbar(frame_canvas, orient='horizontal',
-                              command=self.canvas.xview)
-        self.canvas.configure(yscrollcommand=sb_v.set,
-                              xscrollcommand=sb_h.set)
+        # Controles
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(6)
 
-        sb_v.pack(side='right', fill='y')
-        sb_h.pack(side='bottom', fill='x')
-        self.canvas.pack(fill='both', expand=True)
+        self.btn_prev  = QPushButton("◀  Anterior")
+        self.btn_next  = QPushButton("▶  Próximo")
+        self.btn_auto  = QPushButton("▶▶ Auto")
+        self.btn_start = QPushButton("⏮ Início")
+        self.btn_end   = QPushButton("⏭ Fim")
+        btn_fit        = QPushButton("⤢ Ajustar")
 
-        # Scroll com roda do mouse
-        self.canvas.bind('<MouseWheel>',
-            lambda e: self.canvas.yview_scroll(-1*(e.delta//120), 'units'))
-        self.canvas.bind('<Shift-MouseWheel>',
-            lambda e: self.canvas.xview_scroll(-1*(e.delta//120), 'units'))
+        self.btn_prev.clicked.connect(self.passo_anterior)
+        self.btn_next.clicked.connect(self.proximo_passo)
+        self.btn_auto.clicked.connect(self.toggle_auto)
+        self.btn_start.clicked.connect(self.ir_inicio)
+        self.btn_end.clicked.connect(self.ir_fim)
+        btn_fit.clicked.connect(self.view.fit)
 
-        # ── Painel de controles ────────────────────────────────────
-        ctrl = tk.Frame(self.root, bg='#313244', pady=6)
-        ctrl.pack(side='bottom', fill='x')
+        for btn in (self.btn_prev, self.btn_next, self.btn_auto,
+                    self.btn_start, self.btn_end, btn_fit):
+            ctrl.addWidget(btn)
 
-        style = ttk.Style()
-        style.configure('Ctrl.TButton', font=('Courier', 11, 'bold'),
-                        padding=4)
+        ctrl.addSpacing(16)
+        lbl_vel = QLabel("Velocidade:")
+        lbl_vel.setStyleSheet(f"color: {TEXT_DIM.name()}; font-size: 9px;")
+        self.sld_vel = QSlider(Qt.Orientation.Horizontal)
+        self.sld_vel.setRange(50, 1500)
+        self.sld_vel.setValue(400)
+        self.sld_vel.setFixedWidth(120)
+        ctrl.addWidget(lbl_vel)
+        ctrl.addWidget(self.sld_vel)
 
-        self.btn_prev = ttk.Button(ctrl, text='◀  Anterior',
-                                   style='Ctrl.TButton',
-                                   command=self.passo_anterior)
-        self.btn_prev.pack(side='left', padx=8)
-
-        self.btn_next = ttk.Button(ctrl, text='▶  Próximo',
-                                   style='Ctrl.TButton',
-                                   command=self.proximo_passo)
-        self.btn_next.pack(side='left', padx=4)
-
-        self.btn_auto = ttk.Button(ctrl, text='▶▶ Auto',
-                                   style='Ctrl.TButton',
-                                   command=self.toggle_auto)
-        self.btn_auto.pack(side='left', padx=4)
-
-        ttk.Button(ctrl, text='⏮ Início', style='Ctrl.TButton',
-                   command=self.ir_inicio).pack(side='left', padx=4)
-
-        ttk.Button(ctrl, text='⏭ Fim', style='Ctrl.TButton',
-                   command=self.ir_fim).pack(side='left', padx=4)
-
-        # Velocidade
-        ttk.Label(ctrl, text='  Velocidade:', background='#313244',
-                  foreground='#cdd6f4', font=('Courier', 9)).pack(side='left')
-        self.vel = tk.IntVar(value=400)
-        ttk.Scale(ctrl, from_=50, to=1500, orient='horizontal',
-                  variable=self.vel, length=130).pack(side='left', padx=4)
-
-        # Legenda
+        ctrl.addStretch()
         self._legenda(ctrl)
+        root.addLayout(ctrl)
 
-    def _legenda(self, parent):
-        cores = [
-            ('PROGRAMA/BLOCO',  '#1a6fa8'),
-            ('DECL',            '#b87c0a'),
-            ('COMANDO',         '#c05c1a'),
-            ('FOLHA',           '#aa2222'),
-            ('EXPRESSÃO',       '#6b3fa0'),
+    def _legenda(self, layout):
+        itens = [
+            ('PROGRAMA/BLOCO', '#1a6fa8'),
+            ('DECL',           '#b87c0a'),
+            ('COMANDO',        '#c05c1a'),
+            ('FOLHA',          '#aa2222'),
+            ('EXPRESSÃO',      '#6b3fa0'),
         ]
-        for label, cor in cores:
-            f = tk.Frame(parent, bg=cor, width=12, height=12)
-            f.pack(side='right', padx=(0, 2))
-            ttk.Label(parent, text=label, background='#313244',
-                      foreground='#cdd6f4',
-                      font=('Courier', 7)).pack(side='right', padx=(0, 2))
+        for label, cor in reversed(itens):
+            dot = QLabel('■')
+            dot.setStyleSheet(f"color: {cor}; font-size: 14px;")
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color: {TEXT_DIM.name()}; font-size: 8px;")
+            layout.addWidget(dot)
+            layout.addWidget(lbl)
+            layout.addSpacing(2)
 
-    # ── Lógica de passos ──────────────────────────────────────────
+    # ── Teclado ───────────────────────────────────────────────────────────────
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Period):
+            self.proximo_passo()
+        elif key in (Qt.Key.Key_Left, Qt.Key.Key_Comma):
+            self.passo_anterior()
+        elif key == Qt.Key.Key_Space:
+            self.toggle_auto()
+        elif key == Qt.Key.Key_Home:
+            self.ir_inicio()
+        elif key == Qt.Key.Key_End:
+            self.ir_fim()
+        else:
+            super().keyPressEvent(event)
 
+    # ── Lógica de passos ──────────────────────────────────────────────────────
     def _aplica_evento(self, ev):
-        """Aplica um evento ao estado interno self.nodes."""
         if ev['t'] == 'N':
             self.nodes[ev['id']] = {
-                'tipo': ev['tipo'], 'linha': ev['linha'],
-                'val': ev['val'],
+                'tipo': ev['tipo'], 'linha': ev['linha'], 'val': ev['val'],
                 'f1': None, 'f2': None, 'f3': None, 'prox': None,
             }
             self.ultimo_id = ('N', ev['id'])
@@ -285,9 +370,7 @@ class Visualizador:
             self.ultimo_id = ('P', ev['no'], ev['prox'])
 
     def _reconstroi_ate(self, n):
-        """Reconstrói self.nodes do zero até o passo n (exclusive)."""
-        self.nodes    = {}
-        self.ultimo_id = None
+        self.nodes, self.ultimo_id = {}, None
         for i in range(n):
             self._aplica_evento(self.events[i])
 
@@ -322,38 +405,28 @@ class Visualizador:
             self._parar_auto()
         else:
             self.tocando = True
-            self.btn_auto.configure(text='■  Parar')
-            self._tick_auto()
+            self.btn_auto.setText('■  Parar')
+            self._timer.start(self.sld_vel.value())
 
     def _tick_auto(self):
-        if not self.tocando:
-            return
         if self.passo >= len(self.events):
             self._parar_auto()
             return
         self.proximo_passo()
-        self.apos_id = self.root.after(self.vel.get(), self._tick_auto)
+        self._timer.setInterval(self.sld_vel.value())
 
     def _parar_auto(self):
         self.tocando = False
-        self.btn_auto.configure(text='▶▶ Auto')
-        if self.apos_id:
-            self.root.after_cancel(self.apos_id)
-            self.apos_id = None
+        self.btn_auto.setText('▶▶ Auto')
+        self._timer.stop()
 
-    # ── Desenho ───────────────────────────────────────────────────
-
+    # ── Atualização ───────────────────────────────────────────────────────────
     def _atualiza_tudo(self):
         total = len(self.events)
-        self.lbl_passo.configure(
-            text=f"Passo {self.passo}/{total}",
-            foreground='#cdd6f4', background='#1e1e2e')
-        self.lbl_evento.configure(
-            text=self._desc_ultimo_evento(), background='#1e1e2e')
-
-        self.btn_prev.state(['disabled'] if self.passo == 0 else ['!disabled'])
-        self.btn_next.state(['disabled'] if self.passo >= total else ['!disabled'])
-
+        self.lbl_passo.setText(f"Passo {self.passo}/{total}")
+        self.lbl_evento.setText(self._desc_ultimo_evento())
+        self.btn_prev.setEnabled(self.passo > 0)
+        self.btn_next.setEnabled(self.passo < total)
         self._desenha()
 
     def _desc_ultimo_evento(self):
@@ -363,193 +436,155 @@ class Visualizador:
         if u[0] == 'N':
             n = self.nodes.get(u[1], {})
             t = n.get('tipo', '?').replace('NO_', '')
-            v = n.get('val', '-')
-            return f"Criado: {t}({v}) [id={u[1]}, linha={n.get('linha','?')}]"
+            return (f"Criado: {t}({n.get('val','-')})  "
+                    f"[id={u[1]}, linha={n.get('linha','?')}]")
         if u[0] == 'L':
-            return f"Ligação: nó {u[1]} .{u[2]} → nó {u[3]}"
+            return f"Ligação: nó {u[1]}.{u[2]} → nó {u[3]}"
         if u[0] == 'P':
             return f"Prox: nó {u[1]} → nó {u[2]}"
         return ""
 
+    # ── Desenho ───────────────────────────────────────────────────────────────
     def _desenha(self):
-        c = self.canvas
-        c.delete('all')
+        self.scene.clear()
 
         if not self.nodes:
-            c.create_text(300, 180, text="Nenhum nó ainda.\nClique em ▶ Próximo.",
-                          fill='#585b70', font=('Courier', 14), justify='center')
+            txt = self.scene.addText(
+                "Nenhum nó ainda.\nClique em ▶ Próximo.",
+                QFont('Courier', 14))
+            txt.setDefaultTextColor(TEXT_DIM)
             return
 
         pos = compute_layout(self.nodes)
+        if not pos:
+            return
 
-        # Ajusta scroll region
-        if pos:
-            xs = [p[0] for p in pos.values()]
-            ys = [p[1] for p in pos.values()]
-            c.configure(scrollregion=(
-                min(xs) - MARGIN - NODE_W,
-                min(ys) - MARGIN - NODE_H,
-                max(xs) + MARGIN + NODE_W,
-                max(ys) + MARGIN + NODE_H * 3,
-            ))
-
-        # Determina o nó/aresta destacado
-        destaque_nos   = set()
-        destaque_arestas = set()
+        # Identifica destaque
+        destaque_no     = None
+        destaque_aresta = None
         u = self.ultimo_id
         if u:
             if u[0] == 'N':
-                destaque_nos.add(u[1])
+                destaque_no = u[1]
             elif u[0] == 'L':
-                destaque_arestas.add((u[1], u[2], u[3]))
+                destaque_aresta = (u[1], u[2], u[3])
             elif u[0] == 'P':
-                destaque_arestas.add((u[1], 'prox', u[2]))
+                destaque_aresta = (u[1], 'prox', u[2])
 
-        # Desenha arestas primeiro (ficam por baixo dos nós)
+        # Arestas (abaixo dos nós)
         for nid, n in self.nodes.items():
-            px, py = pos.get(nid, (0, 0))
+            if nid not in pos:
+                continue
+            px, py = pos[nid]
             for slot, fid in [('f1', n.get('f1')), ('f2', n.get('f2')),
                                ('f3', n.get('f3')), ('prox', n.get('prox'))]:
                 if not fid or fid not in pos:
                     continue
-                cx2, cy2 = pos[fid]
-                highlight = (nid, slot, fid) in destaque_arestas
-                self._desenha_aresta(px, py, cx2, cy2, slot, highlight)
+                cx, cy = pos[fid]
+                hl = (destaque_aresta == (nid, slot, fid))
+                self._desenha_aresta(px, py, cx, cy, slot, hl)
 
-        # Desenha nós
+        # Nós
         for nid, n in self.nodes.items():
-            x, y = pos.get(nid, (0, 0))
-            self._desenha_no(x, y, n['tipo'], n['val'],
-                             nid in destaque_nos)
+            if nid not in pos:
+                continue
+            x, y = pos[nid]
+            item = NodeItem(n['tipo'], n['val'], nid == destaque_no)
+            item.setPos(x, y)
+            self.scene.addItem(item)
+
+        # Ajusta sceneRect
+        xs = [p[0] for p in pos.values()]
+        ys = [p[1] for p in pos.values()]
+        self.scene.setSceneRect(
+            min(xs) - MARGIN - NODE_W,
+            min(ys) - MARGIN - NODE_H,
+            max(xs) - min(xs) + 2 * MARGIN + 2 * NODE_W,
+            max(ys) - min(ys) + 2 * MARGIN + 4 * NODE_H,
+        )
 
     def _desenha_aresta(self, px, py, cx, cy, slot, highlight):
-        c = self.canvas
-        eh_prox = (slot == 'prox')
+        eh_prox   = (slot == 'prox')
+        cor       = HIGHLIGHT if highlight else (
+                        QColor('#585b70') if eh_prox else QColor('#6c7086'))
+        espessura = 2 if highlight else 1
 
+        pen = QPen(cor, espessura)
         if eh_prox:
-            # Aresta horizontal: lado direito → lado esquerdo
-            sx, sy = px + NODE_W // 2,  py
-            ex, ey = cx - NODE_W // 2,  cy
-            cor    = '#f9e2af' if highlight else '#585b70'
-            dash   = (6, 4)
-            largura = 1
-        else:
-            # Aresta vertical: base → topo
-            sx, sy = px, py + NODE_H // 2
-            ex, ey = cx, cy - NODE_H // 2
-            cor    = '#f9e2af' if highlight else '#6c7086'
-            dash   = ()
-            largura = 1 if not highlight else 2
+            pen.setStyle(Qt.PenStyle.DashLine)
 
-        c.create_line(sx, sy, ex, ey,
-                      fill=cor, dash=dash, width=largura,
-                      arrow=tk.LAST, arrowshape=(8, 10, 4))
+        sx, sy = (px + NODE_W / 2, py) if eh_prox else (px, py + NODE_H / 2)
+        ex, ey = (cx - NODE_W / 2, cy) if eh_prox else (cx, cy - NODE_H / 2)
 
-        # Rótulo da aresta (só para filhos verticais)
+        self.scene.addLine(sx, sy, ex, ey, pen)
+        self._desenha_seta(ex, ey, sx, sy, cor, espessura)
+
         if not eh_prox:
-            mx = (sx + ex) / 2 + 8
-            my = (sy + ey) / 2
-            rotulo = slot.replace('f', 'filho')
-            c.create_text(mx, my, text=rotulo,
-                          fill='#7f849c', font=('Courier', 7))
+            lbl = self.scene.addText(slot.replace('f', 'filho'),
+                                     QFont('Courier', 7))
+            lbl.setDefaultTextColor(TEXT_DIM)
+            lbl.setPos((sx + ex) / 2 + 8, (sy + ey) / 2 - 8)
 
-    def _desenha_no(self, x, y, tipo, val, highlight):
-        c = self.canvas
-        bg, fg = _cor_no(tipo)
+    def _desenha_seta(self, tx, ty, fx, fy, cor, espessura):
+        dx, dy = tx - fx, ty - fy
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return
+        ux, uy = dx / length, dy / length
+        sz = 8
+        lx = tx - sz * ux + sz * 0.4 * (-uy)
+        ly = ty - sz * uy + sz * 0.4 * ux
+        rx = tx - sz * ux - sz * 0.4 * (-uy)
+        ry = ty - sz * uy - sz * 0.4 * ux
 
-        x0 = x - NODE_W // 2
-        y0 = y - NODE_H // 2
-        x1 = x + NODE_W // 2
-        y1 = y + NODE_H // 2
+        path = QPainterPath()
+        path.moveTo(tx, ty)
+        path.lineTo(lx, ly)
+        path.lineTo(rx, ry)
+        path.closeSubpath()
+        self.scene.addPath(path, QPen(cor, espessura), QBrush(cor))
 
-        if highlight:
-            # Glow amarelo ao redor do nó
-            c.create_rectangle(x0 - 4, y0 - 4, x1 + 4, y1 + 4,
-                                fill='#f9e2af', outline='', width=0)
 
-        # Retângulo com cantos arredondados (simulado com sobreposição)
-        r = 6
-        c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=bg, outline='')
-        c.create_rectangle(x0, y0 + r, x1, y1 - r, fill=bg, outline='')
-        c.create_oval(x0, y0, x0 + 2*r, y0 + 2*r, fill=bg, outline='')
-        c.create_oval(x1 - 2*r, y0, x1, y0 + 2*r, fill=bg, outline='')
-        c.create_oval(x0, y1 - 2*r, x0 + 2*r, y1, fill=bg, outline='')
-        c.create_oval(x1 - 2*r, y1 - 2*r, x1, y1, fill=bg, outline='')
-
-        # Borda
-        borda = '#f9e2af' if highlight else '#45475a'
-        w_borda = 2 if highlight else 1
-        for (ax, ay, bx, by) in [
-            (x0+r, y0, x1-r, y0), (x0+r, y1, x1-r, y1),
-            (x0, y0+r, x0, y1-r), (x1, y0+r, x1, y1-r),
-        ]:
-            c.create_line(ax, ay, bx, by, fill=borda, width=w_borda)
-
-        # Texto
-        c.create_text(x, y, text=_label_no(tipo, val),
-                      fill=fg, font=('Courier', 8, 'bold'),
-                      justify='center', width=NODE_W - 8)
-
-# ── Ponto de entrada ──────────────────────────────────────────────
-
+# ── Ponto de entrada ──────────────────────────────────────────────────────────
 def main():
     if len(sys.argv) != 2:
         print(f"Uso: python3 {sys.argv[0]} <arquivo.g>", file=sys.stderr)
         sys.exit(1)
 
-    arquivo = sys.argv[1]
+    arquivo    = sys.argv[1]
     compilador = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'g-v1')
 
+    app = QApplication(sys.argv)
+
     if not os.path.isfile(compilador):
-        messagebox.showerror("Erro", f"Compilador não encontrado: {compilador}\nRode 'make' primeiro.")
+        QMessageBox.critical(None, "Erro",
+            f"Compilador não encontrado: {compilador}\nRode 'make' primeiro.")
         sys.exit(1)
 
-    # Executa o compilador em modo --step
     try:
         resultado = subprocess.run(
             [compilador, '--step', arquivo],
-            capture_output=True, text=True
-        )
+            capture_output=True, text=True)
     except FileNotFoundError:
-        messagebox.showerror("Erro", f"Não foi possível executar: {compilador}")
+        QMessageBox.critical(None, "Erro",
+            f"Não foi possível executar: {compilador}")
         sys.exit(1)
 
-    # Erros do compilador vão para stderr
     if resultado.returncode != 0:
-        erro = resultado.stderr.strip()
-        messagebox.showerror(
-            "Erro de compilação",
-            f"O compilador reportou:\n\n{erro}"
-        )
+        QMessageBox.critical(None, "Erro de compilação",
+            f"O compilador reportou:\n\n{resultado.stderr.strip()}")
         sys.exit(1)
 
     events = parse_events(resultado.stdout.splitlines())
 
     if not events:
-        messagebox.showinfo("Aviso", "Nenhum evento gerado. O arquivo está vazio?")
+        QMessageBox.information(None, "Aviso",
+            "Nenhum evento gerado. O arquivo está vazio?")
         sys.exit(0)
 
-    root = tk.Tk()
-    root.geometry('1100x720')
-
-    # Tema escuro via ttk
-    style = ttk.Style(root)
-    style.theme_use('clam')
-    style.configure('.', background='#1e1e2e', foreground='#cdd6f4')
-    style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
-    style.configure('TButton', background='#313244', foreground='#cdd6f4',
-                    relief='flat', borderwidth=1)
-    style.map('TButton',
-              background=[('active', '#45475a'), ('disabled', '#181825')],
-              foreground=[('disabled', '#45475a')])
-    style.configure('TScrollbar', background='#313244', troughcolor='#181825')
-    style.configure('Horizontal.TScale', background='#313244',
-                    troughcolor='#45475a')
-    style.configure('Vertical.TScale', background='#313244',
-                    troughcolor='#45475a')
-
-    Visualizador(root, events, arquivo)
-    root.mainloop()
+    win = Visualizador(events, arquivo)
+    win.show()
+    sys.exit(app.exec())
 
 
 if __name__ == '__main__':
