@@ -1,0 +1,10 @@
+PROGRAM line=1
+  BLOCK line=2
+    decls:
+      VAR_DECL line=3 name=x type=int
+    commands:
+      ASSIGN line=6
+        IDENT line=6 name=x
+        INT_CONST line=6 value=1
+      WRITE line=7
+        IDENT line=7 name=x

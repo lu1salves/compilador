@@ -1,0 +1,28 @@
+PROGRAM line=1
+  BLOCK line=2
+    decls:
+      VAR_DECL line=3 name=x type=int
+    commands:
+      WHILE line=6
+        cond:
+          BINARY_OP line=6 op=<
+            IDENT line=6 name=x
+            INT_CONST line=6 value=3
+        body:
+          IF line=6
+            cond:
+              BINARY_OP line=6 op===
+                IDENT line=6 name=x
+                INT_CONST line=6 value=1
+            then:
+              ASSIGN line=6
+                IDENT line=6 name=x
+                BINARY_OP line=6 op=+
+                  IDENT line=6 name=x
+                  INT_CONST line=6 value=1
+            else:
+              ASSIGN line=6
+                IDENT line=6 name=x
+                BINARY_OP line=6 op=+
+                  IDENT line=6 name=x
+                  INT_CONST line=6 value=2
