@@ -53,3 +53,14 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# MARS MIPS simulator
+
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated assembly output
+compiladores/g-v1_files/assembly/
+

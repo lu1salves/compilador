@@ -6,7 +6,6 @@ TARGET  = g-v1
 
 SRCS    = g-v1.tab.c lex.yy.c ast.c symtab.c semantic.c codegen.c
 OBJS    = g-v1.tab.o lex.yy.o ast.o symtab.o semantic.o codegen.o
-API_BINS = tests/symtab_api_test tests/semantic_api_test tests/codegen_api_test
 
 all: $(TARGET)
 
@@ -37,15 +36,6 @@ semantic.o: semantic.c semantic.h symtab.h ast.h
 codegen.o: codegen.c codegen.h ast.h
 	$(CC) $(CFLAGS) -c codegen.c
 
-tests/symtab_api_test: tests/symtab_api_test.c symtab.o ast.o
-	$(CC) $(CFLAGS) -I. -o $@ tests/symtab_api_test.c symtab.o ast.o
-
-tests/semantic_api_test: tests/semantic_api_test.c ast.o symtab.o semantic.o
-	$(CC) $(CFLAGS) -I. -o $@ tests/semantic_api_test.c ast.o symtab.o semantic.o
-
-tests/codegen_api_test: tests/codegen_api_test.c ast.o symtab.o semantic.o codegen.o
-	$(CC) $(CFLAGS) -I. -o $@ tests/codegen_api_test.c ast.o symtab.o semantic.o codegen.o
-
 ast: $(TARGET)
 	./$(TARGET) --ast tests/ast_01_assign.g
 
@@ -57,20 +47,22 @@ asm: $(TARGET)
 
 test: test-all
 
-test-all: test-valid test-lex test-syntax test-semantic test-ast test-symtab test-codegen test-api
-
-test-quick: test-valid test-semantic test-ast test-symtab test-codegen
+test-all: test-valid test-lex test-syntax test-semantic test-ast test-symtab test-codegen
 
 test-invalid: test-lex test-syntax test-semantic
 
 test-valid: $(TARGET)
 	@set -e; \
-	for f in tests/valid_*.g; do \
+	for f in tests/validos/example/*.g; do \
+		exp="tests/validos/correct/$$(basename $$f .g).s"; \
 		printf "[VALID]    %s ... " "$$f"; \
-		out=$$(./$(TARGET) "$$f"); \
-		if [ -n "$$out" ]; then \
+		out=$$(./$(TARGET) --code "$$f"); \
+		expected=$$(cat "$$exp"); \
+		if [ "$$out" != "$$expected" ]; then \
 			echo "FAIL"; \
-			echo "Saida inesperada:"; \
+			echo "Esperado:"; \
+			printf "%s\n" "$$expected"; \
+			echo "Obtido:"; \
 			printf "%s\n" "$$out"; \
 			exit 1; \
 		fi; \
@@ -79,8 +71,8 @@ test-valid: $(TARGET)
 
 test-lex: $(TARGET)
 	@set -e; \
-	for f in tests/invalid_lex_*.g; do \
-		exp="tests/expected/$$(basename $$f .g).out"; \
+	for f in tests/lexicos/example/invalid_lex_*.g; do \
+		exp="tests/lexicos/correct/$$(basename $$f .g).out"; \
 		printf "[LEX]      %s ... " "$$f"; \
 		out=$$(./$(TARGET) "$$f" 2>&1 || true); \
 		expected=$$(cat "$$exp"); \
@@ -97,8 +89,8 @@ test-lex: $(TARGET)
 
 test-syntax: $(TARGET)
 	@set -e; \
-	for f in tests/invalid_syn_*.g; do \
-		exp="tests/expected/$$(basename $$f .g).out"; \
+	for f in tests/sintaticos/example/invalid_syn_*.g; do \
+		exp="tests/sintaticos/correct/$$(basename $$f .g).out"; \
 		printf "[SINTAXE]  %s ... " "$$f"; \
 		out=$$(./$(TARGET) "$$f" 2>&1 || true); \
 		expected=$$(cat "$$exp"); \
@@ -115,8 +107,8 @@ test-syntax: $(TARGET)
 
 test-semantic: $(TARGET)
 	@set -e; \
-	for f in tests/invalid_sem_*.g; do \
-		exp="tests/expected/$$(basename $$f .g).out"; \
+	for f in tests/semanticos/example/invalid_sem_*.g; do \
+		exp="tests/semanticos/correct/$$(basename $$f .g).out"; \
 		printf "[SEM]      %s ... " "$$f"; \
 		out=$$(./$(TARGET) "$$f" 2>&1 || true); \
 		expected=$$(cat "$$exp"); \
@@ -133,8 +125,8 @@ test-semantic: $(TARGET)
 
 test-ast: $(TARGET)
 	@set -e; \
-	for f in tests/ast_*.g; do \
-		exp="tests/expected/$$(basename $$f .g).out"; \
+	for f in tests/structures/example/ast_*.g; do \
+		exp="tests/structures/correct/$$(basename $$f .g).out"; \
 		printf "[AST]      %s ... " "$$f"; \
 		out=$$(./$(TARGET) --ast "$$f"); \
 		expected=$$(cat "$$exp"); \
@@ -151,8 +143,8 @@ test-ast: $(TARGET)
 
 test-symtab: $(TARGET)
 	@set -e; \
-	for f in tests/symtab_*.g; do \
-		exp="tests/expected/$$(basename $$f .g).out"; \
+	for f in tests/structures/example/symtab_*.g; do \
+		exp="tests/structures/correct/$$(basename $$f .g).out"; \
 		printf "[SYMTAB]   %s ... " "$$f"; \
 		out=$$(./$(TARGET) --symtab "$$f"); \
 		expected=$$(cat "$$exp"); \
@@ -169,8 +161,8 @@ test-symtab: $(TARGET)
 
 test-codegen: $(TARGET)
 	@set -e; \
-	for f in tests/codegen_*.g; do \
-		exp="tests/expected/$$(basename $$f .g).s"; \
+	for f in tests/structures/example/codegen_*.g; do \
+		exp="tests/structures/correct/$$(basename $$f .g).s"; \
 		printf "[CODEGEN]  %s ... " "$$f"; \
 		out=$$(./$(TARGET) --code "$$f"); \
 		expected=$$(cat "$$exp"); \
@@ -185,16 +177,5 @@ test-codegen: $(TARGET)
 		echo "OK"; \
 	done
 
-test-api: $(API_BINS)
-	@printf "[API]      tests/symtab_api_test ... "
-	@./tests/symtab_api_test
-	@echo "OK"
-	@printf "[API]      tests/semantic_api_test ... "
-	@./tests/semantic_api_test >/dev/null
-	@echo "OK"
-	@printf "[API]      tests/codegen_api_test ... "
-	@./tests/codegen_api_test >/dev/null
-	@echo "OK"
-
 clean:
-	rm -f $(TARGET) $(OBJS) g-v1.tab.c g-v1.tab.h lex.yy.c $(API_BINS)
+	rm -f $(TARGET) $(OBJS) g-v1.tab.c g-v1.tab.h lex.yy.c

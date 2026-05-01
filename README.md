@@ -76,41 +76,53 @@ O executável `g-v1` será gerado na mesma pasta.
 ### Exemplo completo: compilar e rodar no MARS
 
 ```bash
-./g-v1 -o saida.s tests/valid_03_if_while.g
-java -jar MARS_4_5.jar saida.s
+./g-v1 -o saida.s tests/validos/example/fatorial.g
+java -jar Mars45.jar nc saida.s
+```
+
+Para programas com entrada interativa, redirecione um arquivo de input:
+
+```bash
+java -jar Mars45.jar nc saida.s < entrada.txt
 ```
 
 ---
 
 ## Testes
 
-Todos os testes ficam em `compiladores/g-v1_files/tests/`.
+Todos os testes ficam em `compiladores/g-v1_files/tests/`, organizados por categoria.
 
 ```
 tests/
-├── valid_*.g                        # Programas válidos (devem compilar sem erro)
-├── invalid_lex_*.g                  # Erros léxicos
-├── invalid_syn_*.g                  # Erros sintáticos
-├── invalid_sem_*.g                  # Erros semânticos
-├── ast_*.g                          # Testes de saída da AST
-├── symtab_*.g                       # Testes da tabela de símbolos
-├── codegen_*.g                      # Testes de geração de código MIPS
-├── *_api_test.c                     # Testes unitários dos módulos
-└── expected/                        # Saídas esperadas para comparação
+├── validos/
+│   ├── example/    # Programas válidos (.g)
+│   └── correct/    # Assembly esperado (.s)
+├── lexicos/
+│   ├── example/    # Programas com erros léxicos (.g)
+│   └── correct/    # Saída de erro esperada (.out)
+├── sintaticos/
+│   ├── example/    # Programas com erros sintáticos (.g)
+│   └── correct/    # Saída de erro esperada (.out)
+├── semanticos/
+│   ├── example/    # Programas com erros semânticos (.g)
+│   └── correct/    # Saída de erro esperada (.out)
+└── structures/
+    ├── example/    # Testes de AST, symtab e codegen (.g)
+    └── correct/    # Saídas esperadas (.out / .s)
 ```
 
 ### Executar os testes
 
 ```bash
 make test-all        # Todos os testes
-make test-valid      # Só programas válidos
-make test-lex        # Só erros léxicos
-make test-syntax     # Só erros sintáticos
-make test-semantic   # Só erros semânticos
-make test-ast        # Só saída de AST
-make test-symtab     # Só tabela de símbolos
-make test-codegen    # Só geração de código
-make test-api        # Testes unitários dos módulos
+make test-valid      # Programas válidos (compara assembly gerado)
+make test-lex        # Erros léxicos
+make test-syntax     # Erros sintáticos
+make test-semantic   # Erros semânticos
+make test-ast        # Saída da AST
+make test-symtab     # Tabela de símbolos
+make test-codegen    # Geração de código MIPS
+make test-invalid    # Apenas léxico + sintático + semântico
 ```
 
 ---
@@ -583,23 +595,24 @@ Para expressões binárias:
 
 ## 9. Descrição dos testes
 
-### 9.1. Programas válidos
+### 9.1. Programas válidos (`tests/validos/`)
+
+Cada programa é compilado com `--code` e o assembly gerado é comparado com o arquivo `.s` em `correct/`.
 
 | Arquivo | O que valida |
 |---------|-------------|
-| `valid_01_minimo.g` | programa mínimo; teste de fumaça mais básico |
-| `valid_02_nested_scopes.g` | tipos `int` e `car`, shadowing de variável, blocos aninhados |
-| `valid_03_if_while.g` | `while`, `if/else`, relacionais, escrita de string |
-| `valid_04_io_and_types.g` | `leia` e `escreva` para ambos os tipos |
-| `valid_05_arith_write.g` | atribuição aritmética e escrita de inteiro |
-| `valid_06_if_sem_senao.g` | `se/entao/fimse` sem ramo `senao` |
-| `valid_07_if_else_simples.g` | `se/entao/senao/fimse` simples |
-| `valid_08_if_aninhado.g` | `if/else` aninhado dois níveis |
-| `valid_09_if_triplo_aninhado.g` | `if` aninhado três níveis com escrita de string |
+| `fatorial.g` | laço `enquanto`, operações aritméticas, I/O de inteiro |
+| `nota_em_conceito.g` | `se/senao/fimse` aninhados, escopos com `car` |
+| `pa.g` | progressão aritmética, blocos aninhados, I/O |
+| `seq_ordenada.g` | sequência ordenada, escopos aninhados dentro de `enquanto` |
+| `soma.g` | soma de progressão aritmética, bloco aninhado |
+| `media.g` | média de N números, declaração dentro de `enquanto` |
+| `mdc.g` | máximo divisor comum (algoritmo de Euclides) |
+| `fibonacci.g` | n-ésimo termo da sequência de Fibonacci |
+| `par_impar.g` | verificação de paridade com expressão aritmética |
+| `potencia.g` | potenciação por multiplicações sucessivas |
 
-Saída esperada: nenhuma (compilação silenciosa).
-
-### 9.2. Erros léxicos
+### 9.2. Erros léxicos (`tests/lexicos/`)
 
 | Arquivo | Erro validado |
 |---------|--------------|
@@ -607,15 +620,20 @@ Saída esperada: nenhuma (compilação silenciosa).
 | `invalid_lex_02_comment.g` | `COMENTARIO NAO TERMINA` — `/*` sem fechamento |
 | `invalid_lex_03_string.g` | `CADEIA DE CARACTERES OCUPA MAIS DE UMA LINHA` |
 
-### 9.3. Erros sintáticos
+### 9.3. Erros sintáticos (`tests/sintaticos/`)
 
 | Arquivo | Erro validado |
 |---------|--------------|
 | `invalid_syn_01_missing_semicolon.g` | `;` faltando depois de atribuição |
 | `invalid_syn_02_missing_fimse.g` | `se/entao` sem `fimse` |
 | `invalid_syn_03_escreva_sem_ponto_virgula.g` | `;` faltando depois de `escreva` |
+| `invalid_syn_04_nota_abre_chaves.g` | `{` faltando para iniciar bloco de comandos |
+| `invalid_syn_05_nota_decl_sem_chaves.g` | declaração fora de bloco após `entao` |
+| `invalid_syn_06_nota_fecha_chaves.g` | `}` faltando para fechar bloco de comandos |
+| `invalid_syn_07_nota_fimse_faltando.g` | `fimse` faltando em `se` aninhado |
+| `invalid_syn_08_nota_ponto_virgula.g` | `;` faltando após `escreva "string"` |
 
-### 9.4. Erros semânticos
+### 9.4. Erros semânticos (`tests/semanticos/`)
 
 | Arquivo | Erro validado |
 |---------|--------------|
@@ -625,36 +643,35 @@ Saída esperada: nenhuma (compilação silenciosa).
 | `invalid_sem_04_arith_requires_int.g` | `car + car` — aritmética requer `int` |
 | `invalid_sem_05_relational_mismatch.g` | `int == car` — relacional entre tipos diferentes |
 | `invalid_sem_06_logic_requires_int.g` | `car & car` — lógica requer `int` |
+| `invalid_sem_07_fatorial.g` | variável `i` usada sem declaração em programa de fatorial |
+| `invalid_sem_08_redecl_fatorial.g` | variável `fatorial` redeclarada no mesmo escopo |
+| `invalid_sem_09_nota_tipos_incompativeis.g` | comparação `int < car` em relacional |
+| `invalid_sem_10_nota_atrib_tipo_incompativel.g` | atribuição `car = int` |
+| `invalid_sem_11_nota_conceito_fora_escopo.g` | variável usada fora do escopo onde foi declarada |
 
-### 9.5. Testes de AST
+### 9.5. Testes de estruturas internas (`tests/structures/`)
+
+#### AST
 
 | Arquivo | O que valida |
 |---------|-------------|
 | `ast_01_assign.g` | nós `AST_ASSIGN` e `AST_WRITE` |
 | `ast_02_control.g` | nós `AST_WHILE` e `AST_IF` aninhados |
 
-### 9.6. Testes de tabela de símbolos
+#### Tabela de símbolos
 
 | Arquivo | O que valida |
 |---------|-------------|
 | `symtab_01_nested.g` | dois escopos distintos, nível e linha da declaração |
 | `symtab_02_empty_scope.g` | escopo vazio (imprime `<vazio>`) |
 
-### 9.7. Testes de geração de código
+#### Geração de código
 
 | Arquivo | O que valida |
 |---------|-------------|
 | `codegen_01_assign_write.g` | alocação, atribuição, syscall de escrita de inteiro |
 | `codegen_02_if_else.g` | seção `.data`, labels `if/else`, syscall de escrita de string |
 | `codegen_03_nested_scope.g` | offsets `$fp` em escopos aninhados, desalocação correta |
-
-### 9.8. Testes de API (unitários em C)
-
-| Arquivo | O que testa |
-|---------|------------|
-| `symtab_api_test.c` | inserção, redeclaração, lookup, shadowing, pop |
-| `semantic_api_test.c` | semântica em ASTs construídas à mão (válida, não declarada, tipos) |
-| `codegen_api_test.c` | emissão de assembly a partir de AST construída à mão |
 
 ---
 
